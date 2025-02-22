@@ -69,6 +69,7 @@ for _ in range(num_experiments):
         false_neg += 1
     else:
         true_neg += 1
-
+print(true_neg)
+print(false_neg)
 print("True Positive Rate (TPR):", true_pos / (true_pos + false_neg))
 print("False Positive Rate (FPR):", false_pos / (false_pos + true_neg))
