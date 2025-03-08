@@ -1,141 +1,134 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Define a DP regression estimator that uses loops for all computations
-def dp_reg(dataset, clip_val, eps_val):
-    # Manually clip each data point to the interval [-clip_val, clip_val]
-    n = len(dataset)
-    clipped = []
-    for row in dataset:
-        clipped_row = []
-        for num in row:
-            if num < -clip_val:
-                clipped_row.append(-clip_val)
-            elif num > clip_val:
-                clipped_row.append(clip_val)
-            else:
-                clipped_row.append(num)
-        clipped.append(clipped_row)
+def dp_regression(data, b, eps):
+    """
+    Compute a differentially private regression estimate for beta = S_xy / S_xx.
     
-    # Compute S_xy and S_xx using loops
-    sum_xy = 0.0
-    sum_xx = 0.0
-    for i in range(n):
-        xi = clipped[i][0]
-        yi = clipped[i][1]
-        sum_xy += xi * yi
-        sum_xx += xi * xi
-
-    # Sensitivities: sum_xy changes by at most 2*clip_val^2, sum_xx by clip_val^2
-    # Split the epsilon equally: noise scale = sensitivity / (eps/2)
-    noise_scale_xy = 4 * clip_val**2 / eps_val  # 2*clip_val^2 divided by (eps/2)
-    noise_scale_xx = 2 * clip_val**2 / eps_val    # clip_val^2 divided by (eps/2)
+    Parameters:
+        data: numpy array of shape (n,2), each row is (x_i, y_i)
+        b: clipping bound; each x_i and y_i are clipped to lie in [-b, b]
+        eps: overall privacy parameter
+        
+    Returns:
+        dp_beta: differentially private estimate of beta.
+    """
+    # Clip the data to the interval [-b, b]
+    clipped_data = np.clip(data, -b, b)
+    x = clipped_data[:, 0]
+    y = clipped_data[:, 1]
     
-    # Add Laplace noise (using numpy's laplace function)
-    noisy_xy = sum_xy + np.random.laplace(0, noise_scale_xy)
-    noisy_xx = sum_xx + np.random.laplace(0, noise_scale_xx)
+    # Compute the sufficient statistics
+    S_xy = np.sum(x * y)
+    S_xx = np.sum(x * x)
     
-    # Prevent division by near-zero
-    if abs(noisy_xx) < 1e-6:
-        return 0.0
-    return noisy_xy / noisy_xx
+    # Sensitivities (with one row change):
+    # Sensitivity for S_xy is 2*b^2, for S_xx is b^2.
+    # Split the privacy budget equally: eps1 = eps/2, eps2 = eps/2.
+    # Hence, noise scale for S_xy: 2*b^2 / (eps/2) = 4*b^2/eps,
+    # and for S_xx: b^2 / (eps/2) = 2*b^2/eps.
+    scale_xy = 4 * b**2 / eps
+    scale_xx = 2 * b**2 / eps
+    
+    noisy_S_xy = S_xy + np.random.laplace(loc=0, scale=scale_xy)
+    noisy_S_xx = S_xx + np.random.laplace(loc=0, scale=scale_xx)
+    
+    dp_beta = noisy_S_xy / noisy_S_xx
+    return dp_beta
 
-# Define a non-private OLS estimator using loops
-def ols_reg(dataset):
-    total_xy = 0.0
-    total_xx = 0.0
-    for row in dataset:
-        total_xy += row[0] * row[1]
-        total_xx += row[0] * row[0]
-    if total_xx == 0:
-        return 0.0
-    return total_xy / total_xx
+def ols_regression(data):
+    """
+    Compute the ordinary least squares (OLS) regression estimate beta = S_xy / S_xx.
+    
+    Parameters:
+        data: numpy array of shape (n,2), each row is (x_i, y_i)
+        
+    Returns:
+        beta: OLS estimate of beta.
+    """
+    x = data[:, 0]
+    y = data[:, 1]
+    S_xy = np.sum(x * y)
+    S_xx = np.sum(x * x)
+    if S_xx == 0:
+        return 0
+    return S_xy / S_xx
 
-# Simulation parameters
-num_trials = 1000          # Trials per sample size
-sizes = list(range(100, 5001, 100))  # Sample sizes: 100, 200, ..., 5000
-true_beta = 1.0            # The true regression slope
-privacy_eps = 0.1          # DP privacy parameter
-clip_bound = 1.0           # Clipping bound for x and y
+# Monte Carlo simulation parameters
+eps = 0.1    # privacy parameter
+b = 1        # clipping bound
+num_trials = 1000  # number of Monte Carlo trials for each sample size
+n_values = np.arange(100, 5001, 100)  # sample sizes from 100 to 5000
 
-# Lists to store bias and standard deviation for each estimator
-ols_biases = []
-ols_stds = []
-dp_biases = []
-dp_stds = []
+# Lists to store bias and standard deviation for OLS and DP estimates
+ols_bias = []
+ols_std = []
+dp_bias = []
+dp_std = []
 
-# Loop over different sample sizes
-for sample_size in sizes:
+# True regression slope is 1
+true_beta = 1
+
+for n in n_values:
     ols_estimates = []
     dp_estimates = []
     for _ in range(num_trials):
-        # Generate synthetic data using for loops
-        data_points = []
-        for i in range(sample_size):
-            # Draw x from Uniform(-0.5, 0.5)
-            xi = np.random.uniform(-0.5, 0.5)
-            # Generate noise from N(0, sqrt(0.02)) and compute y = x + noise
-            noise = np.random.normal(0, np.sqrt(0.02))
-            yi = xi + noise
-            data_points.append([xi, yi])
+        # Generate synthetic data:
+        # x_i ~ Uniform(-0.5, 0.5)
+        x = np.random.uniform(-0.5, 0.5, size=n)
+        # y_i = x_i + Gaussian noise, where noise ~ N(0, 0.02)
+        # Here, standard deviation = sqrt(0.02)
+        noise = np.random.normal(0, np.sqrt(0.02), size=n)
+        y = x + noise
         
-        # Compute the estimates
-        ols_val = ols_reg(data_points)
-        dp_val = dp_reg(data_points, clip_bound, privacy_eps)
-        ols_estimates.append(ols_val)
-        dp_estimates.append(dp_val)
+        # Combine into an (n x 2) data array
+        data = np.column_stack((x, y))
+        
+        # Compute the non-private OLS estimate and the DP estimate
+        beta_hat = ols_regression(data)
+        beta_dp = dp_regression(data, b, eps)
+        
+        ols_estimates.append(beta_hat)
+        dp_estimates.append(beta_dp)
     
-    # Calculate mean and standard deviation using explicit loops
-    mean_ols = 0.0
-    for val in ols_estimates:
-        mean_ols += val
-    mean_ols /= len(ols_estimates)
+    # Convert lists to numpy arrays for computation
+    ols_estimates = np.array(ols_estimates)
+    dp_estimates = np.array(dp_estimates)
     
-    mean_dp = 0.0
-    for val in dp_estimates:
-        mean_dp += val
-    mean_dp /= len(dp_estimates)
-    
-    # Store bias (mean error relative to the true beta)
-    ols_biases.append(mean_ols - true_beta)
-    dp_biases.append(mean_dp - true_beta)
-    
-    # Calculate variance for OLS
-    var_ols = 0.0
-    for val in ols_estimates:
-        var_ols += (val - mean_ols)**2
-    var_ols /= len(ols_estimates)
-    ols_stds.append(var_ols**0.5)
-    
-    # Calculate variance for DP estimator
-    var_dp = 0.0
-    for val in dp_estimates:
-        var_dp += (val - mean_dp)**2
-    var_dp /= len(dp_estimates)
-    dp_stds.append(var_dp**0.5)
+    # Compute bias (mean error relative to true_beta) and standard deviation
+    ols_bias.append(np.mean(ols_estimates - true_beta))
+    dp_bias.append(np.mean(dp_estimates - true_beta))
+    ols_std.append(np.std(ols_estimates))
+    dp_std.append(np.std(dp_estimates))
 
-# Plotting results
+# Convert the collected results to numpy arrays
+ols_bias = np.array(ols_bias)
+dp_bias = np.array(dp_bias)
+ols_std = np.array(ols_std)
+dp_std = np.array(dp_std)
+
+# Plotting the results
 plt.figure(figsize=(12, 6))
 
-# Plot Bias vs. Sample Size
+# Plot bias as a function of sample size
 plt.subplot(1, 2, 1)
-plt.plot(sizes, ols_biases, 'o-', label='OLS Bias')
-plt.plot(sizes, dp_biases, 'o-', label='DP Bias')
+plt.plot(n_values, ols_bias, label='OLS Bias', marker='o')
+plt.plot(n_values, dp_bias, label='DP Bias', marker='o')
 plt.axhline(0, color='black', linestyle='--')
+plt.ylim(-1.0, 1.0)
 plt.xlabel('Sample Size (n)')
 plt.ylabel('Bias (Mean Error)')
-plt.title('Bias vs. Sample Size')
-plt.ylim(-1.0, 1.0)
+plt.title('Bias vs Sample Size')
 plt.legend()
 
-# Plot Standard Deviation vs. Sample Size
+# Plot standard deviation as a function of sample size
 plt.subplot(1, 2, 2)
-plt.plot(sizes, ols_stds, 'o-', label='OLS Std')
-plt.plot(sizes, dp_stds, 'o-', label='DP Std')
+plt.plot(n_values, ols_std, label='OLS Std', marker='o')
+plt.plot(n_values, dp_std, label='DP Std', marker='o')
+plt.ylim(0, 1.0)  # standard deviation is always non-negative
 plt.xlabel('Sample Size (n)')
 plt.ylabel('Standard Deviation')
-plt.title('Standard Deviation vs. Sample Size')
-plt.ylim(0, 1.0)
+plt.title('Standard Deviation vs Sample Size')
 plt.legend()
 
 plt.tight_layout()
