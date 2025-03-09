@@ -1,0 +1,35 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Define the range of k (number of queries)
+k_values = np.arange(1, 1001, 10)  # From 1 to 1000 in steps of 10
+
+# Compute standard deviations for Basic and Advanced Composition
+std_basic = np.sqrt(2) * k_values
+std_advanced = 2 * np.sqrt(k_values * np.log(10**9))
+
+# Plot Basic vs. Advanced Composition
+plt.figure(figsize=(8, 6))
+plt.plot(k_values, std_basic, label='Basic Composition', linestyle='dashed', color='blue')
+plt.plot(k_values, std_advanced, label='Advanced Composition', linestyle='solid', color='red')
+plt.xlabel("Number of Queries (k)")
+plt.ylabel("Standard Deviation of Laplace Noise")
+plt.title("Basic vs Advanced Composition in DP")
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# Compute standard deviation for zCDP (Gaussian Mechanism) using the full formula directly
+std_zcdp = np.sqrt((2 * ((2 + 4 * np.log(10**9) - np.sqrt((-2 - 4 * np.log(10**9))**2 - 4)) / 2)) / k_values)
+
+# Plot all three: Basic, Advanced, and zCDP
+plt.figure(figsize=(8, 6))
+plt.plot(k_values, std_basic, label='Basic Composition', linestyle='dashed', color='blue')
+plt.plot(k_values, std_advanced, label='Advanced Composition', linestyle='solid', color='red')
+plt.plot(k_values, std_zcdp, label='zCDP (Gaussian Mechanism)', linestyle='dashdot', color='green')
+plt.xlabel("Number of Queries (k)")
+plt.ylabel("Standard Deviation of Noise")
+plt.title("Comparison of Basic, Advanced, and zCDP Noise Levels")
+plt.legend()
+plt.grid(True)
+plt.show()
