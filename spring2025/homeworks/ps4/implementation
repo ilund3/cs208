@@ -1,119 +1,118 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-def dp_regression(data, b, eps):
-    """
-    Compute a differentially private regression estimate for beta = S_xy / S_xx.
+def dp_beta(dataset, b, eps):
+    # Clip data in [-b, b] interval
+    n_rows = len(dataset)
+    clip = [[min(max(val, -b), b) for val in row] for row in dataset]
+
+    # Calculate and store the sufficient stats
+    S_xy = 0.0
+    S_xx = 0.0
+    for i in range(n_rows):
+        x_val = clip[i][0]
+        y_val = clip[i][1]
+        S_xy += x_val * y_val
+        S_xx += x_val * x_val
     
-    Parameters:
-        data: numpy array of shape (n,2), each row is (x_i, y_i)
-        b: clipping bound; each x_i and y_i are clipped to lie in [-b, b]
-        eps: overall privacy parameter
+    # Sensitivity for S_xy is 2*b^2, for S_xx is b^2, and split privacy budget equally.
+    xy_scale = 4 * b**2 / eps
+    xx_scale = 2 * b**2 / eps
+    
+    S_xy_noise = S_xy + np.random.laplace(loc=0, scale=xy_scale)
+    S_xx_noise = S_xx + np.random.laplace(loc=0, scale=xx_scale)
+    
+    return S_xy_noise / S_xx_noise
+
+# Perform the regression by aggregating the data and storing points for the ratio between the sufficients stats
+def ols_regression(dataset):
+    total_xy = 0.0
+    total_xx = 0.0
+    n_rows = len(dataset)
+    for i in range(n_rows):
+        x_val = dataset[i][0]
+        y_val = dataset[i][1]
+        total_xy += x_val * y_val
+        total_xx += x_val * x_val
+    if total_xx == 0:
+        return 0.0
+    return total_xy / total_xx
+
+# Monte Carlo
+trials = 1000  # number of trials per sample ize
+sample_sizes = list(range(100, 5001, 100))  # sample sizes
+
+ols_bias_vals = []
+ols_std_vals = []
+dp_bias_vals = []
+dp_std_vals = []
+
+for n in sample_sizes:
+    ols_results = []
+    dp_results = []
+    # Run trials for each sample size
+    for t in range(trials):
+        # Generate the synthetic dataset
+        X = []
+        Y = []
+        for i in range(n):
+            # Draw uniformly from [-0.5, 0.5]
+            x_val = np.random.uniform(-0.5, 0.5)
+            # Generate y with added noise
+            noise_val = np.random.normal(0, np.sqrt(0.02))
+            y_val = x_val + noise_val
+            X.append(x_val)
+            Y.append(y_val)
+        # Build dataset
+        current_data = []
+        for i in range(n):
+            current_data.append([X[i], Y[i]])
         
-    Returns:
-        dp_beta: differentially private estimate of beta.
-    """
-    # Clip the data to the interval [-b, b]
-    clipped_data = np.clip(data, -b, b)
-    x = clipped_data[:, 0]
-    y = clipped_data[:, 1]
-    
-    # Compute the sufficient statistics
-    S_xy = np.sum(x * y)
-    S_xx = np.sum(x * x)
-    
-    # Sensitivities (with one row change):
-    # Sensitivity for S_xy is 2*b^2, for S_xx is b^2.
-    # Split the privacy budget equally: eps1 = eps/2, eps2 = eps/2.
-    # Hence, noise scale for S_xy: 2*b^2 / (eps/2) = 4*b^2/eps,
-    # and for S_xx: b^2 / (eps/2) = 2*b^2/eps.
-    scale_xy = 4 * b**2 / eps
-    scale_xx = 2 * b**2 / eps
-    
-    noisy_S_xy = S_xy + np.random.laplace(loc=0, scale=scale_xy)
-    noisy_S_xx = S_xx + np.random.laplace(loc=0, scale=scale_xx)
-    
-    dp_beta = noisy_S_xy / noisy_S_xx
-    return dp_beta
-
-def ols_regression(data):
-    """
-    Compute the ordinary least squares (OLS) regression estimate beta = S_xy / S_xx.
-    
-    Parameters:
-        data: numpy array of shape (n,2), each row is (x_i, y_i)
+        # Find OLS and DP estimates using functions from above
+        est_ols = ols_regression(current_data)
+        est_dp = dp_beta(current_data, 1.0, 0.1)
         
-    Returns:
-        beta: OLS estimate of beta.
-    """
-    x = data[:, 0]
-    y = data[:, 1]
-    S_xy = np.sum(x * y)
-    S_xx = np.sum(x * x)
-    if S_xx == 0:
-        return 0
-    return S_xy / S_xx
-
-# Monte Carlo simulation parameters
-eps = 0.1    # privacy parameter
-b = 1        # clipping bound
-num_trials = 1000  # number of Monte Carlo trials for each sample size
-n_values = np.arange(100, 5001, 100)  # sample sizes from 100 to 5000
-
-# Lists to store bias and standard deviation for OLS and DP estimates
-ols_bias = []
-ols_std = []
-dp_bias = []
-dp_std = []
-
-# True regression slope is 1
-true_beta = 1
-
-for n in n_values:
-    ols_estimates = []
-    dp_estimates = []
-    for _ in range(num_trials):
-        # Generate synthetic data:
-        # x_i ~ Uniform(-0.5, 0.5)
-        x = np.random.uniform(-0.5, 0.5, size=n)
-        # y_i = x_i + Gaussian noise, where noise ~ N(0, 0.02)
-        # Here, standard deviation = sqrt(0.02)
-        noise = np.random.normal(0, np.sqrt(0.02), size=n)
-        y = x + noise
-        
-        # Combine into an (n x 2) data array
-        data = np.column_stack((x, y))
-        
-        # Compute the non-private OLS estimate and the DP estimate
-        beta_hat = ols_regression(data)
-        beta_dp = dp_regression(data, b, eps)
-        
-        ols_estimates.append(beta_hat)
-        dp_estimates.append(beta_dp)
+        ols_results.append(est_ols)
+        dp_results.append(est_dp)
     
-    # Convert lists to numpy arrays for computation
-    ols_estimates = np.array(ols_estimates)
-    dp_estimates = np.array(dp_estimates)
+    # Find OLS estimates mean
+    mean_ols = 0.0
+    for val in ols_results:
+        mean_ols += val
+    mean_ols /= len(ols_results)
     
-    # Compute bias (mean error relative to true_beta) and standard deviation
-    ols_bias.append(np.mean(ols_estimates - true_beta))
-    dp_bias.append(np.mean(dp_estimates - true_beta))
-    ols_std.append(np.std(ols_estimates))
-    dp_std.append(np.std(dp_estimates))
+    mean_dp = 0.0
+    for val in dp_results:
+        mean_dp += val
+    mean_dp /= len(dp_results)
+    
+    # Find bias (substract actual from the esimated)
+    ols_bias_vals.append(mean_ols - 1.0)
+    dp_bias_vals.append(mean_dp - 1.0)
+    
+    # Find std from OLS
+    var_ols = 0.0
+    for val in ols_results:
+        var_ols += (val - mean_ols)**2
+    var_ols /= len(ols_results)
+    std_ols = var_ols**0.5
+    
+    var_dp = 0.0
+    for val in dp_results:
+        var_dp += (val - mean_dp)**2
+    var_dp /= len(dp_results)
+    std_dp = var_dp**0.5
+    
+    ols_std_vals.append(std_ols)
+    dp_std_vals.append(std_dp)
 
-# Convert the collected results to numpy arrays
-ols_bias = np.array(ols_bias)
-dp_bias = np.array(dp_bias)
-ols_std = np.array(ols_std)
-dp_std = np.array(dp_std)
-
-# Plotting the results
+# Plot results
 plt.figure(figsize=(12, 6))
 
-# Plot bias as a function of sample size
+# Bias (Y) vs sample size (X)
 plt.subplot(1, 2, 1)
-plt.plot(n_values, ols_bias, label='OLS Bias', marker='o')
-plt.plot(n_values, dp_bias, label='DP Bias', marker='o')
+plt.plot(sample_sizes, ols_bias_vals,  color='blue', label='OLS Bias', marker='o')
+plt.plot(sample_sizes, dp_bias_vals, color='red', label='DP Bias', marker='o')
 plt.axhline(0, color='black', linestyle='--')
 plt.ylim(-1.0, 1.0)
 plt.xlabel('Sample Size (n)')
@@ -121,11 +120,11 @@ plt.ylabel('Bias (Mean Error)')
 plt.title('Bias vs Sample Size')
 plt.legend()
 
-# Plot standard deviation as a function of sample size
+# Std Deviation (Y) vs sample size(X)
 plt.subplot(1, 2, 2)
-plt.plot(n_values, ols_std, label='OLS Std', marker='o')
-plt.plot(n_values, dp_std, label='DP Std', marker='o')
-plt.ylim(0, 1.0)  # standard deviation is always non-negative
+plt.plot(sample_sizes, ols_std_vals, color='green', marker='o', label='OLS Std')
+plt.plot(sample_sizes, dp_std_vals, color='magenta', marker='o', label='DP Std')
+plt.ylim(0, 1.0)
 plt.xlabel('Sample Size (n)')
 plt.ylabel('Standard Deviation')
 plt.title('Standard Deviation vs Sample Size')
