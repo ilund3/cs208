@@ -2,18 +2,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def generate_dp_synthetic(bound, data_arr, privacy, grid_bins, synth_count=None):
-    # data_arr is assumed to be an array of shape (N,2)
+    # data_arr has shape (N,2)
     N = data_arr.shape[0]
     if synth_count is None:
         synth_count = N
 
-    # Create bin edges manually using a loop
+    # Create the bin edges
     step = (2 * bound) / grid_bins
     bin_edges = []
     for i in range(grid_bins + 1):
         bin_edges.append(-bound + i * step)
 
-    # Build histogram: use nested loops to assign each point to a bin
+    # Build the histogram with loops for each bin
     hist_matrix = [[0 for _ in range(grid_bins)] for _ in range(grid_bins)]
     for pt in data_arr:
         x_val, y_val = pt[0], pt[1]
@@ -31,7 +31,7 @@ def generate_dp_synthetic(bound, data_arr, privacy, grid_bins, synth_count=None)
             iy = grid_bins - 1
         hist_matrix[ix][iy] += 1
 
-    # Add Laplace noise to each bin for differential privacy
+    # Add Laplace noise to each bin
     noisy_hist = []
     for i in range(grid_bins):
         row_noisy = []
@@ -43,7 +43,7 @@ def generate_dp_synthetic(bound, data_arr, privacy, grid_bins, synth_count=None)
             row_noisy.append(noisy_val)
         noisy_hist.append(row_noisy)
 
-    # Normalize the noisy histogram into probabilities manually
+    # Normalize the noisy histogram into probabilities
     tot = 0
     for i in range(grid_bins):
         for j in range(grid_bins):
@@ -57,14 +57,14 @@ def generate_dp_synthetic(bound, data_arr, privacy, grid_bins, synth_count=None)
         for i in range(grid_bins * grid_bins):
             probs.append(1 / (grid_bins * grid_bins))
 
-    # Build a cumulative distribution (CDF) for sampling bins
+    # Build CDF for sampling bins
     cdf = []
     running = 0
     for p in probs:
         running += p
         cdf.append(running)
 
-    # Sample bins for synthetic points using the CDF (inefficient but explicit)
+    # Sample bins for synthetic points using the CDF
     chosen_bins = []
     for _ in range(synth_count):
         r = np.random.rand()
@@ -78,7 +78,7 @@ def generate_dp_synthetic(bound, data_arr, privacy, grid_bins, synth_count=None)
     # Generate synthetic data points uniformly within the chosen bin boundaries
     synthetic_pts = []
     for bin_idx in chosen_bins:
-        # Determine grid position from the flattened index
+        # Determine grid positions
         row_idx = bin_idx // grid_bins
         col_idx = bin_idx % grid_bins
         low_x = bin_edges[row_idx]
@@ -101,7 +101,7 @@ def compute_ols_slope(points):
         return 0
     return numerator / denominator
 
-# Monte Carlo simulation to compare non-private OLS vs. DP synthetic-data OLS
+# Monte Carlo simulation
 sample_sizes = list(range(100, 5001, 100))
 num_trials = 200
 
@@ -114,7 +114,7 @@ for n in sample_sizes:
     ols_slopes = []
     dp_slopes = []
     for _ in range(num_trials):
-        # Generate dataset: x from Uniform[-0.5, 0.5] and y = x + noise, clipped to [-1,1]
+        # Generate dataset, clipped to [-1,1]
         orig_points = []
         for _ in range(n):
             xi = np.random.uniform(-0.5, 0.5)
@@ -126,11 +126,11 @@ for n in sample_sizes:
             orig_points.append([xi, yi])
         orig_points = np.array(orig_points)
         
-        # Compute OLS slope on original data
+        # OLS slope on original data
         ols_val = compute_ols_slope(orig_points)
         ols_slopes.append(ols_val)
         
-        # Generate DP synthetic dataset (using m = n) and compute its OLS slope
+        # Generate DP synthetic dataset and OLS slopes
         dp_data = generate_dp_synthetic(1, orig_points, 0.1, 20, synth_count=n)
         dp_val = compute_ols_slope(dp_data)
         dp_slopes.append(dp_val)
@@ -142,17 +142,11 @@ for n in sample_sizes:
     ols_biases.append(mean_ols - true_beta)
     dp_biases.append(mean_dp - true_beta)
     
-    # Calculate standard deviations manually
-    var_ols = 0
-    var_dp = 0
-    for val in ols_slopes:
-        var_ols += (val - mean_ols) ** 2
-    for val in dp_slopes:
-        var_dp += (val - mean_dp) ** 2
-    ols_stds.append(np.sqrt(var_ols / len(ols_slopes)))
-    dp_stds.append(np.sqrt(var_dp / len(dp_slopes)))
+    # Calculate standard deviations
+    ols_std = np.std(ols_slopes)
+    dp_std = np.std(dp_slopes)
 
-# Plotting bias and standard deviation vs. sample size
+# Plotting
 plt.figure(figsize=(10, 10))
 
 # Bias plot
