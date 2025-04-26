@@ -24,13 +24,11 @@ def clamp(x, bounds):
 def sigmoid(x):
     return 1 / (1 + np.exp(-x))
 
-# Data loading and prep
-
-# Load the data
+# Loading in data
 df = pd.read_csv("https://raw.githubusercontent.com/privacytoolsproject/cs208/master/data/MaPUMS5full.csv")
 edu_vals = df['educ'].astype(float).values
 
-# Create a binary disability indicator (10% probability) using a for-loop
+# 10% probability disability indicator
 np.random.seed(12345)
 disability_vals = []
 for _ in range(len(edu_vals)):
@@ -40,16 +38,16 @@ for _ in range(len(edu_vals)):
         disability_vals.append(0)
 disability_vals = np.array(disability_vals)
 
-# Use 'employed' column if available; otherwise, use 'married'
+# Use 'employed' or 'married' columns
 if 'employed' in df.columns:
     target_vals = df['employed'].astype(float).values
 else:
     target_vals = df['married'].astype(float).values
 
-# Combine into a single NumPy array with columns: [educ, disability, employment]
+# Combine into one array w/ columns [educ, disability, employment]
 data = np.column_stack((edu_vals, disability_vals, target_vals))
 
-# Modified loss function that handles two predictors (education, disability)
+# Modified loss function for education and disability parameters
 def logit_neg_log_likelihood(beta, data):
     num_samples = data.shape[0]
     loss_array = np.empty(num_samples)
@@ -59,15 +57,10 @@ def logit_neg_log_likelihood(beta, data):
         y_val   = data[i, 2]
         linear_term = beta[0] + beta[1] * edu_val + beta[2] * dis_val
         prob = sigmoid(linear_term)
-        # manually clip probability to avoid log(0)
-        if prob < 1e-8:
-            prob = 1e-8
-        if prob > 1 - 1e-8:
-            prob = 1 - 1e-8
         loss_array[i] = - (y_val * np.log(prob) + (1 - y_val) * np.log(1 - prob))
     return loss_array
 
-# Modified finite-difference gradient with extra loops and if/else statements
+# Modified finite-difference gradient
 def calc_clamped_gradient(X, C, theta, fun):
     delta_val = 1e-4
     param_count = len(theta)
@@ -75,61 +68,59 @@ def calc_clamped_gradient(X, C, theta, fun):
     base_losses = fun(theta, X)
     
     for param_idx in range(param_count):
-        # Create perturbation vector
+        # Perturbation vector
         perturb = np.zeros(param_count)
         perturb[param_idx] = delta_val
         new_losses = fun(theta + perturb, X)
         diffs = []
         for j in range(len(base_losses)):
             diff_val = (new_losses[j] - base_losses[j]) / delta_val
-            # Manually clamp the derivative
+            # Clamping
             if diff_val < -C:
                 diff_val = -C
             elif diff_val > C:
                 diff_val = C
             diffs.append(diff_val)
-        # Compute the average derivative using a loop
+        # Average derivative
         sum_diff = 0
         for d in diffs:
             sum_diff += d
         grad_vector[param_idx] = sum_diff / len(diffs)
     return grad_vector
 
-# DP-SGD training procedure with reordering and extra loops
+# DP-SGD training procedure
 def dp_sgd_train(data, initial_theta, nu, epsilon=1, delta=1e-6, C=10):
     total_samples = data.shape[0]
     batch_size = int(round(np.sqrt(total_samples)))
     num_batches = int(np.ceil(total_samples / batch_size))
     
-    # Create a permutation manually
+    # Permutation
     perm_indices = np.random.permutation(total_samples)
     shuffled_data = data[perm_indices]
     
     current_theta = np.array(initial_theta, dtype=float)
     theta_history = [current_theta.copy()]
     
-    # Manually iterate over batches using a for-loop
+    # Iterate over each batch
     for batch_num in range(num_batches):
         start = batch_num * batch_size
         stop = (batch_num + 1) * batch_size
         current_batch = shuffled_data[start:stop]
         
-        # Compute gradient with finite differences
+        # Find gradient and noise scale
         grad_estimate = calc_clamped_gradient(current_batch, C, current_theta, logit_neg_log_likelihood)
-        
-        # Calculate noise scale based on sensitivity and adjusted epsilon
         sensitivity = (2 * C) / batch_size
         adjusted_epsilon = epsilon * batch_size / 2.0
         noise_std = (sensitivity / adjusted_epsilon) * np.sqrt(2 * np.log(2/delta))
         
-        # Build noise vector via loop
+        # Build noise vector
         noise_vector = []
         for i in range(len(current_theta)):
             noise_value = gaussian(0, noise_std, size=1)[0]
             noise_vector.append(noise_value)
         noise_vector = np.array(noise_vector)
         
-        # Update theta using coordinate-wise learning rates in a loop
+        # Update theta
         updated_theta = []
         for idx in range(len(current_theta)):
             new_val = current_theta[idx] - nu[idx] * (grad_estimate[idx] + noise_vector[idx])
@@ -140,17 +131,15 @@ def dp_sgd_train(data, initial_theta, nu, epsilon=1, delta=1e-6, C=10):
         
     return current_theta, np.array(theta_history)
 
-# Exponential Mech for Private Model Select
-
-# We vary the learning rate for the disability parameter only
+# Exponential Mech for Private Model Select, only varying the disability parameter
 num_candidates = 10
 fixed_lr_intercept = 1.0
 fixed_lr_educ = 0.01
-candidate_lr_disability = np.linspace(0.001, 0.1, num_candidates)
+candidate_lr_disability = np.linspace(0.005, 0.05, 10)
 
 candidate_models = []
 for lr_candidate in candidate_lr_disability:
-    # Create learning rates vector (for intercept, education, disability)
+    # Create intercept, education, disability learning rate vectors
     lr_vector = [fixed_lr_intercept, fixed_lr_educ, lr_candidate]
     final_params, history = dp_sgd_train(data.copy(), [0, 0, 0], lr_vector, epsilon=1.0, delta=1e-6, C=10)
     losses = logit_neg_log_likelihood(final_params, data)
@@ -158,7 +147,7 @@ for lr_candidate in candidate_lr_disability:
     for val in losses:
         avg_loss += val
     avg_loss = avg_loss / len(losses)
-    candidate_score = -avg_loss  # lower loss gives a higher (less negative) score
+    candidate_score = -avg_loss  # less negative score from lower loss
     candidate_models.append({
         "lr": lr_candidate,
         "theta": final_params,
@@ -166,9 +155,9 @@ for lr_candidate in candidate_lr_disability:
         "history": history
     })
 
-# Exponential mechanism to select one model candidate
+# Exponential mechanism
 exp_epsilon = 1.0
-sensitivity_score = 1.0  # assumed sensitivity
+sensitivity_score = 1.0
 score_arr = np.array([model["score"] for model in candidate_models])
 exp_weights = np.exp((exp_epsilon * score_arr) / (2 * sensitivity_score))
 probabilities = exp_weights / np.sum(exp_weights)
@@ -180,30 +169,18 @@ print("Disability learning rate: {:.4f}".format(selected_model["lr"]))
 print("Final DP-SGD parameters (theta):", selected_model["theta"])
 print("Score (negative mean loss): {:.4f}".format(selected_model["score"]))
 
-# Plot the training history for each parameter
-history_data = selected_model["history"]
-iterations = list(range(history_data.shape[0]))
-
-plt.figure(figsize=(10, 5))
-plt.plot(iterations, history_data[:, 0], marker='o', linestyle='-', color='blue')
-plt.title("Intercept Evolution during DP-SGD")
-plt.xlabel("Iteration")
-plt.ylabel("Intercept Value")
-plt.grid(True)
+# Plot
+plt.plot(np.arange(len(history)), history[:, 0])
+plt.title("Intercept")
+plt.axhline(y=0, color="red", linestyle="--")
 plt.show()
 
-plt.figure(figsize=(10, 5))
-plt.plot(iterations, history_data[:, 1], marker='s', linestyle='--', color='green')
-plt.title("Education Coefficient Evolution during DP-SGD")
-plt.xlabel("Iteration")
-plt.ylabel("Education Coefficient")
-plt.grid(True)
+plt.plot(np.arange(len(history)), history[:, 1])
+plt.title("Education Coefficient")
+plt.axhline(y=0, color="red", linestyle="--")
 plt.show()
 
-plt.figure(figsize=(10, 5))
-plt.plot(iterations, history_data[:, 2], marker='^', linestyle='-.', color='red')
-plt.title("Disability Coefficient Evolution during DP-SGD")
-plt.xlabel("Iteration")
-plt.ylabel("Disability Coefficient")
-plt.grid(True)
+plt.plot(np.arange(len(history)), history[:, 2])
+plt.title("Disability Coefficient")
+plt.axhline(y=0, color="red", linestyle="--")
 plt.show()
